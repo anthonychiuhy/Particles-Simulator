@@ -25,37 +25,33 @@ class Ball:
         r = self.r
         return Ball(x, v, m, r)
     
-    def same_state_as(self, ball):
-        same_x = np.all(self.x == ball.x)
-        same_v = np.all(self.v == ball.v)
-        same_m = self.m == ball.m
-        same_r = self.r == ball.r
-        return same_x and same_v and same_m and same_r
-    
-    def has_collided_ball(self, ball):
+    def is_colliding_ball(self, ball):
         return np.sum((self.x - ball.x)**2) <= (self.r + ball.r)**2
     
-    def has_collided_box(self, box):
-        hit_outer = np.any(self.x + self.r >= box.dims)
-        hit_inner = np.any(self.x - self.r <= np.zeros(3))
-        return hit_outer or hit_inner
+    def is_colliding_box(self, box):
+        colliding_outer = np.any(self.x + self.r >= box.dims)
+        colliding_inner = np.any(self.x - self.r <= np.zeros(3))
+        return colliding_outer or colliding_inner
     
     def is_moving_closer_ball(self, ball):
         n = (ball.x - self.x)
         v = ball.v - self.v
         return np.dot(v, n) < 0
-     
+    
     def is_collapsing_into_ball(self, ball):
-        return self.has_collided_ball(ball) and self.is_moving_closer_ball(ball)
+        return self.is_colliding_ball(ball) and self.is_moving_closer_ball(ball)
     
     def is_collapsing_into_box(self, box):
-        hit_outer = (self.x + self.r >= box.dims)
-        hit_inner = (self.x - self.r <= np.zeros(3))
+        colliding_outer = (self.x + self.r >= box.dims)
+        colliding_inner = (self.x - self.r <= np.zeros(3))
         
-        moving_into_outer = np.any(hit_outer * self.v > 0)
-        moving_into_inner = np.any(hit_inner * self.v < 0)
+        moving_closer_outer = self.v > 0
+        moving_closer_inner = self.v < 0
         
-        return moving_into_inner or moving_into_outer
+        collapsing_outer = np.any(colliding_outer & moving_closer_outer)
+        collapsing_inner = np.any(colliding_inner & moving_closer_inner)
+        
+        return collapsing_outer or collapsing_inner
     
     def collide_ball(self, ball, e=1):
         m1, m2 = self.m, ball.m
@@ -77,15 +73,17 @@ class Ball:
         ball.v = v2M_new + vM
     
     def collide_box(self, box, e=1):
-        hit_outer = (self.x + self.r >= box.dims)
-        hit_inner = (self.x - self.r <= np.zeros(3))
+        colliding_outer = (self.x + self.r >= box.dims)
+        colliding_inner = (self.x - self.r <= np.zeros(3))
         
-        self.v[hit_outer] *= -e
-        self.v[hit_inner] *= -e
-    
-    def move(self, dt, F=np.zeros(3), g=np.zeros(3)):
-        F_net = F + self.m*g
-        self.act_force(F_net, dt)
+        moving_closer_outer = self.v > 0
+        moving_closer_inner = self.v < 0
+        
+        collapsing_outer = colliding_outer & moving_closer_outer
+        collapsing_inner = colliding_inner & moving_closer_inner
+        
+        self.v[collapsing_outer] *= -e
+        self.v[collapsing_inner] *= -e
         
     def act_force(self, F, dt):
         a = F/self.m
@@ -94,7 +92,11 @@ class Ball:
         
         self.x = x_new
         self.v = v_new
-    
+        
+    def move(self, dt, F=np.zeros(3), g=np.zeros(3)):
+        F_net = F + self.m*g
+        self.act_force(F_net, dt)
+
 
 class Box:
     def __init__(self, width, height, depth):
@@ -108,50 +110,28 @@ class Universe:
         self.box = box
         self.g = g
     
-    @staticmethod
-    def copy_balls(balls):
-        balls_copy = []
-        for ball in balls:
-            balls_copy.append(ball.copy())
-        return balls_copy
-    
-    @staticmethod
-    def same_balls_states(balls1, balls2):
-        same = []
-        for ball1, ball2 in zip(balls1, balls2):
-            same.append(ball1.same_state_as(ball2))
-        return all(same)
-    
-    @staticmethod
-    def has_collided_ball_ball(ball1, ball2):
-        return ball1.has_collided_ball(ball2)
-    
-    @staticmethod
-    def has_collided_ball_box(ball, box):
-        return ball.has_collided_box(box)
-    
     @staticmethod    
-    def has_collision_balls_balls(balls):
+    def has_colliding_balls_balls(balls):
         n = len(balls)
         for i in range(n-1):
             for j in range(i+1, n):
-                if Universe.has_collided_ball_ball(balls[i], balls[j]):
+                if balls[i].is_colliding_ball(balls[j]):
                     return True
         return False
         
     @staticmethod
-    def has_collision_balls_box(balls, box):
+    def has_colliding_balls_box(balls, box):
         for ball in balls:
-            if Universe.has_collided_ball_box(ball, box):
+            if ball.is_colliding_box(box):
                 return True
         return False
     
     @staticmethod
-    def has_collision(balls, box):
-        return Universe.has_collision_balls_balls(balls) or Universe.has_collision_balls_box(balls, box)
+    def has_colliding(balls, box):
+        return Universe.has_colliding_balls_balls(balls) or Universe.has_colliding_balls_box(balls, box)
     
     @staticmethod
-    def has_balls_collapsing(balls):
+    def has_collapsing_balls_balls(balls):
         n = len(balls)
         for i in range(n-1):
             for j in range(i+1, n):
@@ -160,36 +140,36 @@ class Universe:
         return False
                 
     @staticmethod
-    def has_ball_box_collapsing(balls, box):
+    def has_collapsing_balls_box(balls, box):
         for ball in balls:
             if ball.is_collapsing_into_box(box):
                 return True
         return False
     
     @staticmethod
-    def has_collapse(balls, box):
-        return Universe.has_balls_collapsing(balls) or Universe.has_ball_box_collapsing(balls, box)
+    def has_collapsing(balls, box):
+        return Universe.has_collapsing_balls_balls(balls) or Universe.has_collapsing_balls_box(balls, box)
     
     @staticmethod
-    def find_collided_pairs(balls):
+    def find_colliding_balls_balls(balls):
         n = len(balls)
-        collided = []
+        colliding = []
         for i in range(n-1):
             for j in range(i+1, n):
-                if Universe.has_collided_ball_ball(balls[i], balls[j]):
-                    collided.append((balls[i], balls[j]))
-        return collided
+                if balls[i].is_colliding_ball(balls[j]):
+                    colliding.append((balls[i], balls[j]))
+        return colliding
     
     @staticmethod
-    def find_collided_balls_box(balls, box):
-        collided = []
+    def find_colliding_balls_box(balls, box):
+        colliding = []
         for ball in balls:
-            if Universe.has_collided_ball_box(ball, box):
-                collided.append(ball)
-        return collided
+            if ball.is_colliding_box(box):
+                colliding.append(ball)
+        return colliding
     
     @staticmethod
-    def find_collapsing_pairs(balls):
+    def find_collapsing_balls_balls(balls):
         n = len(balls)
         collapsing = []
         for i in range(n-1):
@@ -207,103 +187,32 @@ class Universe:
         return collapsing
     
     @staticmethod
-    def collide_ball_ball(ball1, ball2, e=1):
-        ball1.collide_ball(ball2)
-        
-    @staticmethod
-    def collide_ball_box(ball, box, e=1):
-        ball.collide_box(box)
-    
-    """
-    @staticmethod
-    def collide_balls_balls(balls):
+    def collide_resolve(balls, box):
         n = len(balls)
+        
         for i in range(n-1):
             for j in range(i+1, n):
-                if Universe.has_collided_ball_ball(balls[i], balls[j]):
-                    Universe.collide_ball_ball(balls[i], balls[j])
-    
-    @staticmethod
-    def collide_balls_box(balls, box):
-        for ball in balls:
-            if Universe.has_collided_ball_box(ball, box):
-                Universe.collide_ball_box(ball, box)
-    
-    
-    @staticmethod
-    def will_collide(balls, box, dt, Fs, g):
-        balls_virtual = Universe.virtual_step(balls, box, dt, Fs, g)
-        return Universe.has_collision_balls_balls(balls_virtual) or Universe.has_collision_balls_box(balls_virtual, box)
-    
-    @staticmethod
-    def collide(balls, box):
-        Universe.collide_balls_balls(balls)
-        Universe.collide_balls_box(balls, box)
-    """
-    
-    @staticmethod
-    def collide_resolve(balls, box):
-        print('resolve')
-        collided_pairs = Universe.find_collapsing_pairs(balls)
-        collided_box = Universe.find_collapsing_balls_box(balls, box)
-        for ball1, ball2 in collided_pairs:
-            ball1.collide_ball(ball2)
+                if balls[i].is_collapsing_into_ball(balls[j]):
+                    balls[i].collide_ball(balls[j])
         
-        for ball in collided_box:
-            ball.collide_box(box)
+        for i in range(n):
+            balls[i].collide_box(box)
     
     @staticmethod
     def move(balls, dt, Fs, g):
         for ball, F in zip(balls, Fs):
             ball.move(dt, F, g)
     
-    """
-    @staticmethod
-    def virtual_step(balls, box, dt, Fs, g):
-        balls_virtual = Universe.copy_balls(balls)
-        Universe.move(balls_virtual, dt, Fs, g)
-        return balls_virtual
-    """
-    
-    def step(self, dt, Fs=None, Fs_next=None):
+    def step(self, dt, Fs=None):
         balls = self.balls
         box = self.box
         g = self.g
         if Fs is None:
             Fs = np.zeros((len(balls), 3))
-        if Fs_next is None:
-            Fs_next = np.zeros((len(balls), 3))
-            
+        
         # Advance time step
         Universe.move(balls, dt, Fs, g)
         
-        
-        #collided_pairs = Universe.find_collided_pairs(balls)
-        #collided_box_balls = Universe.find_collided_box_balls(balls, box)
-        
-        while Universe.has_collapse(balls, box):
+        # Resolve collisions
+        while Universe.has_collapsing(balls, box):
             Universe.collide_resolve(balls, box)
-            
-        
-        #if Universe.has_collision(balls, box):
-        #    Universe.collide(balls, box)
-        
-        #if Universe.has_collision_balls_balls(balls):
-        #    collided_pairs = Universe.who_collided_balls(balls)
-        #    while Universe.has_pair_moving_closer(collided_pairs):
-        #        print('resolve')
-        #       for ball1, ball2 in collided_pairs:
-        #           if ball1.is_moving_closer(ball2):
-        #                Universe.collide_ball_ball(ball1, ball2)
-        
-        #if Universe.has_collision_balls_box(balls, box):
-        #    pass
-            
-        #collided_pairs = Universe.who_collided_balls(balls)
-        #collided_box = Universe.who_collided_box(balls, box)
-        
-        #while Universe.will_collide(balls, box, dt, Fs_next, g):
-            #balls_prev = Universe.copy_balls(balls)
-            #Universe.collide_resolve(balls, box, dt, Fs_next, g)
-            #if Universe.same_balls_states(balls, balls_prev):
-            #    break
